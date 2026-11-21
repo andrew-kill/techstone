@@ -27,6 +27,8 @@
   .nav { top: 50%; transform: translateY(-50%); width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; }
   #prev { left: 22px; } #next { right: 22px; }
   #fx-btn { left: 50%; bottom: 26px; transform: translateX(-50%); height: 44px; padding: 0 18px; border-radius: 22px; display: flex; align-items: center; gap: 12px; }
+  #snd { top: calc(20px + env(safe-area-inset-top)); right: 20px; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; }
+  #snd .x { display: none; } #snd.off .w { display: none; } #snd.off .x { display: inline; }
   #fx-dots { display: flex; gap: 5px; }
   #fx-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: background .3s, box-shadow .3s; }
   #fx-dots i.on { background: var(--acc); box-shadow: 0 0 10px var(--acc); }
@@ -56,6 +58,7 @@
 <button id="prev" class="nav" aria-label="Modelo anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 5l-7 7 7 7"/></svg></button>
 <button id="next" class="nav" aria-label="Modelo siguiente"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5l7 7-7 7"/></svg></button>
 <button id="fx-btn" aria-label="Cambiar efecto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg><span id="fx-dots"></span></button>
+<button id="snd" aria-label="Sonido"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="w" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="x" d="M17 9l5 6M22 9l-5 6"/></svg></button>
 <div id="hint">toca 2 veces</div>
 <script type="module">
 /*
@@ -935,6 +938,105 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('resize', resize);
 
+
+/* =====================================================================
+   MÚSICA
+   · Si en la misma carpeta que index.html existe un archivo "musica.mp3",
+     suena esa canción en bucle.
+   · Si no existe, suena una música ambiental generada por código (abajo).
+   Los navegadores no dejan sonar nada hasta que la persona toca la página,
+   por eso arranca con el primer toque / clic.
+   VOLUMEN: 0 a 1
+   ===================================================================== */
+const VOLUMEN = 0.55;
+const ARCHIVO_MUSICA = 'musica.mp3';
+const music = { on: true, started: false, ctx: null, master: null, audioEl: null };
+
+function startAmbient(ctx) {
+  music.ctx = ctx;
+  const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination); music.master = master;
+  master.gain.linearRampToValueAtTime(VOLUMEN, ctx.currentTime + 6);
+  // reverb (sala enorme)
+  const rev = ctx.createConvolver();
+  const len = ctx.sampleRate * 5, ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6); }
+  rev.buffer = ir;
+  const wet = ctx.createGain(); wet.gain.value = 0.7; rev.connect(wet); wet.connect(master);
+  const dry = ctx.createGain(); dry.gain.value = 0.35; dry.connect(master);
+  // filtro que respira lento
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 0.7;
+  const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = 0.04; lfoG.gain.value = 500;
+  lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start();
+  lp.connect(dry); lp.connect(rev);
+  const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+  // ACORDES (notas MIDI). Cambia aquí la armonía.
+  const chords = [[50, 57, 60, 64, 69], [46, 53, 57, 62, 65], [41, 53, 57, 60, 64], [48, 55, 59, 62, 67]];
+  const CHORD_SEC = 9;
+  const pad = (notes, t) => {
+    notes.forEach((m, i) => {
+      for (const det of [-6, 5]) {
+        const o = ctx.createOscillator(); o.type = i === 0 ? 'sine' : 'sawtooth';
+        o.frequency.value = mtof(m); o.detune.value = det + (Math.random() - 0.5) * 4;
+        const g = ctx.createGain(); const peak = (i === 0 ? 0.11 : 0.028);
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + 3.5);
+        g.gain.setValueAtTime(peak, t + CHORD_SEC - 1); g.gain.linearRampToValueAtTime(0, t + CHORD_SEC + 3);
+        o.connect(g); g.connect(lp); o.start(t); o.stop(t + CHORD_SEC + 3.2);
+      }
+    });
+  };
+  // campanitas lejanas (como estrellas)
+  const scale = [74, 76, 77, 79, 81, 84, 86, 88];
+  const bell = (t) => {
+    const o = ctx.createOscillator(), o2 = ctx.createOscillator(), g = ctx.createGain();
+    const f = mtof(scale[Math.floor(Math.random() * scale.length)]);
+    o.type = 'sine'; o.frequency.value = f; o2.type = 'sine'; o2.frequency.value = f * 2.76;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 4);
+    const g2 = ctx.createGain(); g2.gain.value = 0.25; o2.connect(g2); g2.connect(g);
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    o.connect(g);
+    if (pan) { pan.pan.value = Math.random() * 1.6 - 0.8; g.connect(pan); pan.connect(rev); pan.connect(dry); } else { g.connect(rev); g.connect(dry); }
+    o.start(t); o2.start(t); o.stop(t + 4.2); o2.stop(t + 4.2);
+  };
+  let ci = 0, nextChord = ctx.currentTime + 0.1, nextBell = ctx.currentTime + 2;
+  setInterval(() => {
+    const now = ctx.currentTime;
+    while (nextChord < now + 1.5) { pad(chords[ci % chords.length], nextChord); ci++; nextChord += CHORD_SEC; }
+    while (nextBell < now + 1.5) { if (Math.random() < 0.8) bell(nextBell); nextBell += 0.9 + Math.random() * 2.4; }
+  }, 400);
+}
+
+function startMusic() {
+  if (music.started) return; music.started = true;
+  // todo se crea dentro del toque para que iPhone/Android lo permitan
+  let ctx = null;
+  try { const AC = window.AudioContext || window.webkitAudioContext; ctx = new AC(); ctx.resume(); } catch (e) {}
+  const a = new Audio(ARCHIVO_MUSICA); a.loop = true; a.volume = 0;
+  const fallback = () => { if (music.audioEl) return; try { if (ctx) startAmbient(ctx); } catch (e) {} };
+  a.addEventListener('error', fallback, { once: true });
+  const pr = a.play();
+  if (pr && pr.then) pr.then(() => {
+    music.audioEl = a;
+    try { ctx && ctx.close(); } catch (e) {}
+    const t0 = performance.now();
+    const fade = () => { const k = Math.min(1, (performance.now() - t0) / 3000); if (music.on) a.volume = VOLUMEN * k; if (k < 1) requestAnimationFrame(fade); };
+    fade();
+  }).catch(fallback);
+}
+function setMusic(on) {
+  music.on = on;
+  document.getElementById('snd').classList.toggle('off', !on);
+  if (music.audioEl) music.audioEl.volume = on ? VOLUMEN : 0;
+  if (music.ctx) { const t = music.ctx.currentTime; music.master.gain.cancelScheduledValues(t); music.master.gain.setTargetAtTime(on ? VOLUMEN : 0, t, 0.4); if (on) music.ctx.resume(); }
+}
+const firstTouch = () => { if (music.on) startMusic(); };
+window.addEventListener('pointerdown', firstTouch, { once: true });
+window.addEventListener('keydown', firstTouch, { once: true });
+document.getElementById('snd').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!music.started) { music.on = true; startMusic(); document.getElementById('snd').classList.remove('off'); return; }
+  setMusic(!music.on);
+});
+
 /* ------------------------------------------------------- loop */
 const clock = new THREE.Clock();
 function frame() {
@@ -995,7 +1097,7 @@ let pre = 0;
 const idle = window.requestIdleCallback || ((f) => setTimeout(f, 200));
 const warm = () => { while (pre < WORKS.length && built[pre]) pre++; if (pre < WORKS.length) { getWork(pre); applyEffect(); idle(warm); } };
 setTimeout(() => idle(warm), 1200);
-window.__arte = { go, nextEffect, setEffect: (k) => { lastFx = 0; effect = (k - 1 + EFFECTS.length) % EFFECTS.length; nextEffect(); } };
+window.__arte = { music: () => music, go, nextEffect, setEffect: (k) => { lastFx = 0; effect = (k - 1 + EFFECTS.length) % EFFECTS.length; nextEffect(); } };
 
 </script>
 </body>
