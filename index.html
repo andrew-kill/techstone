@@ -3,7 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>ECOS</title>
+<title>Techstone</title>
+<meta name="description" content="Arte desde el 3000 a.C. hasta Roma, en 3D interactivo.">
+<meta property="og:title" content="Techstone">
+<meta property="og:description" content="Arte desde el 3000 a.C. hasta Roma, en 3D interactivo.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://techstone-two.vercel.app/">
+<meta property="og:image" content="https://techstone-two.vercel.app/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#050505">
 <style>
   :root { --ink: #efe9df; --dim: rgba(239,233,223,.5); --line: rgba(239,233,223,.2); --acc: #ffb35c; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -20,9 +30,9 @@
   #fx-dots { display: flex; gap: 5px; }
   #fx-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: background .3s, box-shadow .3s; }
   #fx-dots i.on { background: var(--acc); box-shadow: 0 0 10px var(--acc); }
-  #hint { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 2; pointer-events: none; font: 500 11px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .32em; text-transform: uppercase; color: var(--ink); opacity: .75; white-space: nowrap; animation: pulse 2.4s ease-in-out infinite; transition: opacity 1.2s; }
+  #hint { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 2; pointer-events: none; font: 600 17px/1 ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .3em; text-transform: uppercase; color: var(--ink); opacity: .75; white-space: nowrap; animation: pulse 2.4s ease-in-out infinite; transition: opacity 1.2s; }
   #hint.gone { opacity: 0 !important; animation: none; }
-  @keyframes pulse { 0%,100% { opacity: .35; } 50% { opacity: .85; } }
+  @keyframes pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
   body:not(.ready) #hint { opacity: 0; }
   body.light { --ink: #1c1814; --dim: rgba(28,24,20,.6); --line: rgba(28,24,20,.25); --acc: #b3261e; }
   body.light button { background: rgba(240,235,225,.4); }
@@ -31,7 +41,7 @@
     .nav { width: 46px; height: 46px; top: auto; bottom: calc(22px + env(safe-area-inset-bottom)); transform: none; }
     #prev { left: 16px; } #next { right: 16px; }
     #fx-btn { bottom: calc(23px + env(safe-area-inset-bottom)); }
-    #hint { bottom: calc(86px + env(safe-area-inset-bottom)); font-size: 10px; }
+    #hint { bottom: calc(96px + env(safe-area-inset-bottom)); font-size: 15px; }
   }
 </style>
 <script type="importmap">
@@ -49,7 +59,7 @@
 <div id="hint">toca 2 veces</div>
 <script type="module">
 /*
-  ECOS — pieza interactiva para la materia de arte.
+  Techstone — pieza interactiva para la materia de arte.
   Todo vive en este archivo. Lo más útil para editar:
    · EFECTOS: busca "EFECTOS" (lista) y "EFECTO" (cada filtro dentro del shader).
    · Partículas: busca "pointsMat" (tamaño uSize, cantidad 75000 en finishWork).
@@ -650,8 +660,36 @@ function deepField(S, seed = 2026) {
   }
   return cv;
 }
+/* Blur suave + bloom: se encoge la imagen varias veces y se vuelve a agrandar encima.
+   NITIDEZ: cuánto de la imagen original queda (0 a 1) · BLOOM: fuerza de cada capa de resplandor */
+function softGlow(src, NITIDEZ = 0.55, BLOOM = [0.55, 0.45, 0.35]) {
+  const S = src.width;
+  const out = document.createElement('canvas'); out.width = out.height = S;
+  const o = out.getContext('2d');
+  o.imageSmoothingEnabled = true; o.imageSmoothingQuality = 'high';
+  // cadena de reducciones (1/2 … 1/32) con un borde repetido para que no se note la costura
+  const P = S / 4, levels = [];
+  const l0 = document.createElement('canvas'); l0.width = l0.height = (S + 2 * P) / 2;
+  const x0 = l0.getContext('2d'); x0.imageSmoothingEnabled = true; x0.imageSmoothingQuality = 'high';
+  for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) x0.drawImage(src, (P + dx * S) / 2, (P + dy * S) / 2, S / 2, S / 2);
+  levels.push(l0); let prev = l0;
+  for (let k = 1; k < 5; k++) {
+    const c = document.createElement('canvas'); c.width = c.height = Math.max(4, Math.round(prev.width / 2));
+    const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+    x.drawImage(prev, 0, 0, c.width, c.height); levels.push(c); prev = c;
+  }
+  const put = (k) => { const f = (S + 2 * P) / levels[k].width; o.drawImage(levels[k], P / f, P / f, S / f, S / f, 0, 0, S, S); };
+  // blur suave = mezcla de original y versión a 1/2
+  o.globalAlpha = 1; put(0);
+  o.globalAlpha = NITIDEZ; o.drawImage(src, 0, 0);
+  // bloom = capas muy reducidas sumadas con luz
+  o.globalCompositeOperation = 'lighter';
+  [[2, BLOOM[0]], [3, BLOOM[1]], [4, BLOOM[2]]].forEach(([l, a]) => { o.globalAlpha = a; put(l); });
+  o.globalAlpha = 1; o.globalCompositeOperation = 'source-over';
+  return out;
+}
 const BG_SIZE = isCoarse ? 1536 : 2048;
-const bgTex = new THREE.CanvasTexture(deepField(BG_SIZE));
+const bgTex = new THREE.CanvasTexture(softGlow(deepField(BG_SIZE)));
 bgTex.colorSpace = THREE.SRGBColorSpace;
 bgTex.wrapS = bgTex.wrapT = THREE.RepeatWrapping;
 bgTex.generateMipmaps = false; bgTex.minFilter = THREE.LinearFilter;
@@ -711,7 +749,11 @@ const postMat = new THREE.ShaderMaterial({
       vec3 col;
       // ======================= EFECTO 0 · MÁRMOL (render limpio)
       if(uMode == 0){
+        // ---- universo (blur y bloom se calculan en softGlow(); aquí solo el ruido)
+        const float GRANO = 0.006;   // cantidad de ruido
         vec3 space = texture2D(tBg, gl_FragCoord.xy/uBgScale + uBgOff).rgb;
+        float gn = hash(gl_FragCoord.xy*0.73 + fract(uTime*7.0)*61.0) - 0.5;
+        space += vec3(gn) * GRANO + vec3(0.0005, 0.0004, 0.0012);
         col = mix(space, sc, a);
       // ======================= EFECTO 1 · PARTÍCULAS (glow + estela)
       // 3.0 = radio del brillo · 1.1 = intensidad · 0.8 = cuánto dura la estela (0 a 0.95)
