@@ -1005,35 +1005,60 @@ function startAmbient(ctx) {
   }, 400);
 }
 
+// audio silencioso: en iPhone hace que suene aunque el celular esté en modo silencio
+function silentWavURL() {
+  const n = 4000, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 16000, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
 function startMusic() {
-  if (music.started) return; music.started = true;
+  if (music.started) return;
+  music.started = true;
   // todo se crea dentro del toque para que iPhone/Android lo permitan
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  try { const sil = new Audio(silentWavURL()); sil.loop = true; sil.play().catch(() => {}); music.silent = sil; } catch (e) {}
   let ctx = null;
   try { const AC = window.AudioContext || window.webkitAudioContext; ctx = new AC(); ctx.resume(); } catch (e) {}
-  const a = new Audio(ARCHIVO_MUSICA); a.loop = true; a.volume = 0;
-  const fallback = () => { if (music.audioEl) return; try { if (ctx) startAmbient(ctx); } catch (e) {} };
+  const a = new Audio(ARCHIVO_MUSICA); a.loop = true; a.preload = 'auto';
+  let done = false;
+  const fallback = () => {
+    if (done) return; done = true;
+    try { if (ctx) { ctx.resume(); startAmbient(ctx); if (!music.on) music.master.gain.value = 0; } } catch (e) {}
+  };
   a.addEventListener('error', fallback, { once: true });
   const pr = a.play();
   if (pr && pr.then) pr.then(() => {
-    music.audioEl = a;
+    if (done) { a.pause(); return; }
+    done = true; music.audioEl = a; a.muted = !music.on;
     try { ctx && ctx.close(); } catch (e) {}
-    const t0 = performance.now();
-    const fade = () => { const k = Math.min(1, (performance.now() - t0) / 3000); if (music.on) a.volume = VOLUMEN * k; if (k < 1) requestAnimationFrame(fade); };
-    fade();
   }).catch(fallback);
+  setTimeout(() => { if (!done && a.paused) fallback(); }, 2500);
 }
 function setMusic(on) {
   music.on = on;
   document.getElementById('snd').classList.toggle('off', !on);
-  if (music.audioEl) music.audioEl.volume = on ? VOLUMEN : 0;
-  if (music.ctx) { const t = music.ctx.currentTime; music.master.gain.cancelScheduledValues(t); music.master.gain.setTargetAtTime(on ? VOLUMEN : 0, t, 0.4); if (on) music.ctx.resume(); }
+  if (music.audioEl) music.audioEl.muted = !on;
+  if (music.ctx && music.master) {
+    const t = music.ctx.currentTime, g = music.master.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(on ? VOLUMEN : 0, t + 0.3);
+    if (on) music.ctx.resume();
+  }
 }
-const firstTouch = () => { if (music.on) startMusic(); };
-window.addEventListener('pointerdown', firstTouch, { once: true });
-window.addEventListener('keydown', firstTouch, { once: true });
-document.getElementById('snd').addEventListener('click', (e) => {
+// arranca al primer toque. En celular el audio solo se permite al LEVANTAR el dedo.
+const sndBtn = document.getElementById('snd');
+const unlock = (e) => {
+  if (music.started) return;
+  if (e && e.target && sndBtn.contains(e.target)) return; // el botón de sonido se maneja aparte
+  if (music.on) startMusic();
+};
+['pointerup', 'touchend', 'click', 'keydown'].forEach((ev) => window.addEventListener(ev, unlock, { passive: true }));
+sndBtn.addEventListener('click', (e) => {
   e.stopPropagation();
-  if (!music.started) { music.on = true; startMusic(); document.getElementById('snd').classList.remove('off'); return; }
+  if (!music.started) { music.on = true; sndBtn.classList.remove('off'); startMusic(); return; }
   setMusic(!music.on);
 });
 
